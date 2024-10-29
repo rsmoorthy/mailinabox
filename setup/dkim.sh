@@ -6,20 +6,28 @@
 #
 # The DNS configuration for DKIM is done in the management daemon.
 
-source setup/functions.sh # load our functions
+source setup/functions.sh   # load our functions
 source /etc/mailinabox.conf # load global vars
 
 # Install DKIM...
 echo "Installing OpenDKIM/OpenDMARC..."
 apt_install opendkim opendkim-tools opendmarc
 
+# With the later versions of systemd, it refuses to read pid files not owned by root. However
+# opendkim is configured to write as non-root. So for now, we just comment out
+# PIDFile from opendkim.service
+sed -ie 's/^PIDFile/#PIDFile/' /usr/lib/systemd/system/opendkim.service
+
+# Similary for opendmarc
+sed -ie 's/^PIDFile/#PIDFile/' /usr/lib/systemd/system/opendmarc.service
+
 # Make sure configuration directories exist.
-mkdir -p /etc/opendkim;
+mkdir -p /etc/opendkim
 mkdir -p "$STORAGE_ROOT/mail/dkim"
 
 # Used in InternalHosts and ExternalIgnoreList configuration directives.
 # Not quite sure why.
-echo "127.0.0.1" > /etc/opendkim/TrustedHosts
+echo "127.0.0.1" >/etc/opendkim/TrustedHosts
 
 # We need to at least create these files, since we reference them later.
 # Otherwise, opendkim startup will fail
@@ -27,10 +35,10 @@ touch /etc/opendkim/KeyTable
 touch /etc/opendkim/SigningTable
 
 if grep -q "ExternalIgnoreList" /etc/opendkim.conf; then
-	true # already done #NODOC
+    true # already done #NODOC
 else
-	# Add various configuration options to the end of `opendkim.conf`.
-	cat >> /etc/opendkim.conf << EOF;
+    # Add various configuration options to the end of `opendkim.conf`.
+    cat >>/etc/opendkim.conf <<EOF
 Canonicalization		relaxed/simple
 MinimumKeyBits          1024
 ExternalIgnoreList      refile:/etc/opendkim/TrustedHosts
@@ -53,7 +61,7 @@ fi
 # such as Google. But they and others use a 2048 bit key, so we'll
 # do the same. Keys beyond 2048 bits may exceed DNS record limits.
 if [ ! -f "$STORAGE_ROOT/mail/dkim/mail.private" ]; then
-	opendkim-genkey -b 2048 -r -s mail -D "$STORAGE_ROOT/mail/dkim"
+    opendkim-genkey -b 2048 -r -s mail -D "$STORAGE_ROOT/mail/dkim"
 fi
 
 # Ensure files are owned by the opendkim user and are private otherwise.
@@ -61,9 +69,9 @@ chown -R opendkim:opendkim "$STORAGE_ROOT/mail/dkim"
 chmod go-rwx "$STORAGE_ROOT/mail/dkim"
 
 tools/editconf.py /etc/opendmarc.conf -s \
-	"Syslog=true" \
-	"Socket=inet:8893@[127.0.0.1]" \
-	"FailureReports=false"
+    "Syslog=true" \
+    "Socket=inet:8893@[127.0.0.1]" \
+    "FailureReports=false"
 
 # SPFIgnoreResults causes the filter to ignore any SPF results in the header
 # of the message. This is useful if you want the filter to perform SPF checks
@@ -71,7 +79,7 @@ tools/editconf.py /etc/opendmarc.conf -s \
 # used by spamassassin to evaluate the mail for spamminess.
 
 tools/editconf.py /etc/opendmarc.conf -s \
-        "SPFIgnoreResults=true"
+    "SPFIgnoreResults=true"
 
 # SPFSelfValidate causes the filter to perform a fallback SPF check itself
 # when it can find no SPF results in the message header. If SPFIgnoreResults
@@ -80,13 +88,13 @@ tools/editconf.py /etc/opendmarc.conf -s \
 # spamassassin to evaluate the mail for spamminess.
 
 tools/editconf.py /etc/opendmarc.conf -s \
-        "SPFSelfValidate=true"
+    "SPFSelfValidate=true"
 
 # Disables generation of failure reports for sending domains that publish a
 # "none" policy.
 
 tools/editconf.py /etc/opendmarc.conf -s \
-        "FailureReportsOnNone=false"
+    "FailureReportsOnNone=false"
 
 # AlwaysAddARHeader Adds an "Authentication-Results:" header field even to
 # unsigned messages from domains with no "signs all" policy. The reported DKIM
@@ -95,7 +103,7 @@ tools/editconf.py /etc/opendmarc.conf -s \
 # is used by spamassassin to evaluate the mail for spamminess.
 
 tools/editconf.py /etc/opendkim.conf -s \
-        "AlwaysAddARHeader=true"
+    "AlwaysAddARHeader=true"
 
 # Add OpenDKIM and OpenDMARC as milters to postfix, which is how OpenDKIM
 # intercepts outgoing mail to perform the signing (by adding a mail header)
@@ -110,9 +118,9 @@ tools/editconf.py /etc/opendkim.conf -s \
 # configuring smtpd_milters there to only list the OpenDKIM milter
 # (see mail-postfix.sh).
 tools/editconf.py /etc/postfix/main.cf \
-	"smtpd_milters=inet:127.0.0.1:8891 inet:127.0.0.1:8893"\
-	non_smtpd_milters=\$smtpd_milters \
-	milter_default_action=accept
+    "smtpd_milters=inet:127.0.0.1:8891 inet:127.0.0.1:8893" \
+    non_smtpd_milters=\$smtpd_milters \
+    milter_default_action=accept
 
 # We need to explicitly enable the opendmarc service, or it will not start
 hide_output systemctl enable opendmarc
@@ -121,4 +129,3 @@ hide_output systemctl enable opendmarc
 restart_service opendkim
 restart_service opendmarc
 restart_service postfix
-
